@@ -1,0 +1,34 @@
+# garbage
+.DS_Store
+
+# Emacs temporaries
+*[#]*
+
+# logs
+log/
+
+# ignore clojure(script) compiler artifacts
+*.class
+.cpcache
+out*
+resources/public/*js
+resources/public/js
+resources/public/out
+
+# ignore JS artifacts
+node_modules
+
+# ignore cider artifacts
+.nrepl-port
+
+# ignore racket compiler artifacts
+compiled
+
+# ignore any databases
+*.db
+store/
+
+# ignore experiments
+scratch*
+
+datomic-pro*

@@ -1,0 +1,77 @@
+{:deps {org.clojure/clojurescript {:mvn/version "1.10.758" :exclusions [org.clojure/spec.alpha]}
+        org.clojure/clojure       {:mvn/version "1.10.1"}
+        org.clojure/core.async    {:mvn/version "1.2.603"}
+        org.clojure/spec.alpha    {:mvn/version "0.2.187"}
+        ;; NOTE spec2 is broken e.g. for multi-spec generators, so not prod ready imo
+        ;; org.clojure/alpha.spec    {:local/root "../spec-alpha2"}
+        ring/ring-core            {:mvn/version "1.8.1"}
+        ring/ring-jetty-adapter   {:mvn/version "1.8.1"}
+        ring/ring-codec           {:mvn/version "1.1.2"}
+        datalevin                 {:mvn/version "0.3.3"}
+        datascript                {:mvn/version "1.0.1"}
+        rum                       {:mvn/version "0.12.3"}
+        instaparse                {:mvn/version "1.4.10"}
+
+        ;; com.datomic/datomic-pro   {:mvn/version "1.0.6222"}
+        ;; com.datomic/datomic-pro   {:local/root "datomic-pro-1.0.6222/datomic-pro-1.0.6222.jar"}
+
+        ;; logging
+        ;;  - interface
+        org.clojure/tools.logging      {:mvn/version "1.1.0"}
+        ;;  - backend
+        org.slf4j/jcl-over-slf4j       {:mvn/version "1.7.25"}
+        org.slf4j/jul-to-slf4j         {:mvn/version "1.7.25"}
+        org.slf4j/log4j-over-slf4j     {:mvn/version "1.7.25"}
+        ch.qos.logback/logback-classic {:mvn/version "1.2.3"
+                                        :exclusions  [org.slf4j/slf4j-api]}}
+
+ :paths [ ;; "resources"
+         "clj/src"]
+
+ :aliases
+ {:dev {:extra-deps {org.clojure/tools.namespace  {:mvn/version "1.0.0"}
+                     org.clojure/java.classpath   {:mvn/version "1.0.0"}
+                     org.clojure/test.check       {:mvn/version "1.1.0"}
+                     org.clojure/tools.deps.alpha {:mvn/version "0.9.763" :exclusions [org.slf4j/slf4j-nop]}
+                     me.raynes/fs                 {:mvn/version "1.4.6"}
+                     compliment                   {:mvn/version "0.3.6"}
+                     com.cemerick/pomegranate     {:mvn/version "0.4.0"}
+                     org.tcrawley/dynapath        {:mvn/version "0.2.5"}
+                     nrepl                        {:mvn/version "0.6.0"}
+                     cider/piggieback             {:mvn/version "0.5.2"}
+                     cider/cider-nrepl            {:mvn/version "0.25.2"}}
+
+        :extra-paths ["clj/dev"
+                      ;; "clj/classes"
+                      ;; "out"
+                      ]
+
+        ;; logging - ensure proper backend before clojure.tools.logging first loaded
+        :jvm-opts ["-Dfullmeta.env=dev"
+                   "-Dclojure.tools.logging.factory=clojure.tools.logging.impl/slf4j-factory"]}
+
+  ;; TODO it is one or the other! We can alternate simply by supplying appropriate alias
+  :spec  {:extra-deps    {org.clojure/spec.alpha {:mvn/version "0.2.187"}}}
+  :spec2 {:extra-deps    {org.clojure/alpha.spec {:local/root "../spec-alpha2"}}}
+
+  :prod {:extra-paths ["clj/prod"]
+         :jvm-opts    ["-Dfullmeta.env=prod"
+                       "-Dclojure.tools.logging.factory=clojure.tools.logging.impl/slf4j-factory"]}
+
+  ;; $> clj -M:dev:repl
+  :repl {:main-opts ["-m" "nrepl.cmdline" "--middleware"
+                     "[cider.nrepl/cider-middleware,cider.piggieback/wrap-cljs-repl]"]}
+
+  ;; $> clj -M:dev:cljs/watch
+  :cljs/watch {:main-opts ["-m" "make" ":cljs/watch"]}
+
+  ;; General approach:
+  ;; $> clj -M:dev:make :cljs/watch
+  ;; $> clj -M:dev:make :cljs/build
+  :make {:main-opts ["-m" "make"]}}
+
+ ;; our custom keys clojure.tools.deps.alpha knows nothing about
+ :custom {:compile-path   "clj/classes"
+          :do-not-refresh ["clj/classes"
+                           ;; "clj/dev"
+                           "resources"]}}

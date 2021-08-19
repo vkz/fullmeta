@@ -1,0 +1,547 @@
+# fullmeta  -*- mode: org; fill-column: 90 -*-
+#+CATEGORY: fullmeta
+#+STARTUP: content
+#+seq_todo: TODO STARTED(s/@) BLOCKED(b@/@) | DONE(d@/@) DEFERRED(f@/@) CANCELLED(x@/@) IDEA(i/@)
+#+TAGS: { TIL(t) }
+#+PROPERTY: Effort_ALL 0 0:10 0:30 1:00 2:00 3:00 4:00 5:00 6:00 7:00
+#+COLUMNS: %30ITEM(Task) %CLOCKSUM %15Effort(Effort){:}
+
+* Dev tools
+** TODO Fix "conflicting" cljs repls
+
+Or rather allow multiple CLJS repls to co-exist somehow and dwim.
+
+Assuming my current cljs setup, what happens if I open two tabs _bob.pledge.ling_ and
+_alice.pledge.link_? Each would load REPL code and therefore "connect" to cider, right?
+
+I need to
+- [ ] confirm that cider evals go out to every CLJS repl
+- [ ] find what happens with the replies from respective browser envs
+
+I feel like there's conflict on the way out or in or maybe both.
+
+* Prelude and libs
+
+** CGI
+
+*** IDEA each CGI root can be color-coded
+
+I.e. cgi-context map can also take :color param. Then any response with valid HTML gets
+a tiny frame around the whole page in that color, so that it is immediately obvious which
+CGI root matched and running. We probably only ever want this in dev.
+
+Better way to implement this is to supply ={:my {:response fn}}= in CGI context map that
+does that, then it is no longer CGI lib dev (i.e. me) trying to figure the exact use case,
+but the lib user themselves. It becomes a nice trick rather than lib functionality. I like
+it better because e.g. not immediately obvious how you'd figure whether you are in dev
+mode etc etc.
+
+*** TODO Pass request to =assert-failed=
+
+Atm it only receives assertion map. For erroneous (exceptional) conditions this is fine,
+but any request-response logic requires a request e.g. we may want to redirect from
+=assert-failed= handler or generate custom response. In such cases having request context
+around maybe valuable.
+
+Essentially we'll need to make =assert-failed= a procedure of two args assertion map and
+request.
+
+We may even want to be able to pass additional arguments from assert-site?
+
+#+begin_src clojure
+  (cgi/assert something else-handler arg1 arg2)
+  ;; results in call =>
+  (assert-failed assertion-map request arg1 arg2)
+#+end_src
+
+*** TODO Review =cgi/assert= API and default failure handler
+
+Two problems: API and =*assert-failed-default*=.
+
+#+begin_src clojure
+  (defmacro assert
+    ([form] (assert-expand {:key nil :form form :assert-failed nil}))
+    ([a b] (if (keyword? a)
+             (assert-expand {:key a :form b :assert-failed nil})
+             (assert-expand {:key nil :form a :assert-failed b}))))
+
+  ;; First, not convinced this API isn't confusing more than helpful!
+  (cgi/assert (some condition))
+  (cgi/assert :key (some condition))
+  (cgi/assert (some condition) (fn [assertion-map] (remedy assertion)))
+
+  ;; Second, atm *assert-failed-default* throws whish is just silly,
+  ;; since typically cgi/assert failures aren't exceptional conditions
+  ;; but should rather be treated as "some required conditions of
+  ;; current handler have not been satisfied" i.e. delegate to the next
+  ;; handler.
+#+end_src
+
+*** DONE Move to simplified :my (:their) request
+CLOSED: [2021-01-04 Mon 09:06] SCHEDULED: <2021-01-01 Fri>
+
+- State "DONE"       from "TODO"       [2021-01-04 Mon 09:06] \\
+  Not convinced my and their idea with wrapping in my-request and
+  their-request records is a good one. Wasted too much time on that
+  already. Moving on. Alternative could be to only treat :my and :their
+  as nothing more than cache maybe even use clojure.core.cache. So, no
+  protocols or methods extended to my or their records, just keyword
+  lookups.
+Rewrite to my simplified cgi variant of my and their:
+- proto/my-request and proto/their-request records,
+- extend proto/request-protocol to
+  - fullmeta.cgi.request-record
+  - fullmeta.cgi.my-request
+  - fullmeta.cgi.their-erquest
+  - proto/my-request and proto/their-request
+- defmethod make proto/my-request
+- defmethod make proto/their-request
+
+Rewrite :my and :their request computation in pledge/main:
+- :my {:request (partial make proto/my-request)}
+- :their {:request (partial make proto/their-request)}
+
+*** IDEA Multi-root middleware or shared cgi context
+CLOSED: [2021-08-06 Fri 14:28]
+
+Idea is to share the request when it doesn't really change from root to root so we avoid
+e.g. recomputing :my request when it fails one root and goes to the next.
+
+#+begin_src clojure
+  (cgi/middleware
+   {:my {:request my-request}
+    :their {:request their-request}
+    :root
+    {"pledge/www"
+     {:assert #(let [my (partial my %) their (partial their %)]
+                 (-> (their proto/id) (owns? (my proto/id))))}
+
+     "pledge/www/auth"
+     {:assert (-> % (my proto/store) #_is store/local?)}
+
+     "pledge/www/init"
+     {:fail #(-> % (my proto/id) :handle #_is (#{"unknown" "www" "id" "hq"}))
+      :assert #(-> % (my proto/store) #_is store/empty?)}}})
+#+end_src
+
+*** DONE Implement cgi/assert
+CLOSED: [2020-12-08 Tue 12:10] SCHEDULED: <2020-12-08 Tue>
+- State "DONE"       from "STARTED"    [2020-12-08 Tue 12:10]
+:LOGBOOK:
+CLOCK: [2020-12-08 Tue 08:42]--[2020-12-08 Tue 12:10] =>  3:28
+:END:
+
+*** DEFERRED Implement cgi/or
+CLOSED: [2020-12-08 Tue 12:12] SCHEDULED: <2020-12-08 Tue>
+
+- State "DEFERRED"   from "TODO"       [2020-12-08 Tue 12:12] \\
+  There is no straightforward way of adding cgi/or to the fullmeta.cgi
+  namespace so that it doesn't shadow clojure.core/or. Probably some
+  intern magic would work, but cgi/or is so superficial that for now
+  I'll just make do with =(cgi/assert form #_or handler)= trick
+Which is essentially is =cgi/assert= assuming we have our =cgi/assert= propagate the value
+it computes, which is reasonable, cause unlike clojure.core/assert we'd never want to
+disable our asserts, so it isn't just for side-effects at dev time but part of our control
+flow.
+#+begin_src clojure
+  (defn authenticate [request]
+    (if (-> (their request id) (owns? (my request id)))
+      ;; on success return "parsed" value for further processing
+      (their request id)
+      ;; on failure cgi/set-condition! which returns nil and therefore
+      ;; would short-circuit any some-> pipeline
+      (cgi/set-condition! :must-authenticate)))
+
+  (defmethod cgi/assert-failed `authenticate [assertion] (redirect "/auth"))
+
+  (-> request
+      (my id)
+      (cgi/or (constantly (www/redirect "/error")))
+      (authenticate)
+      ;; rely on cgi/assert-failed handler above
+      (cgi/assert)
+      (some-method-on-identity)
+      (cgi/or something-else))
+#+end_src
+
+Since cgi/or would clash with clojure.core/or here's an interesting exercise. Is there a
+way to "add" a function and therefore its name to a namespace without shadowing any
+matching name that's been imported like 'or from clojure.core. Obviously we could do it by
+simply :excluding 'or from clojure or renaming it.
+#+begin_src clojure
+  ;; this ends up shadowing clojure.core/or but maybe there is variation
+  ;; or some other trick that would let me add 'or to cgi ns and leave
+  ;; clojure.core/or available as 'or without :excluding it
+  (intern
+   #_in (find-ns 'fullmeta.cgi)
+   #_name (with-meta 'or
+            (update (meta #'assert) :name (constantly 'or)))
+   #_val (.get #'assert))
+
+#+end_src
+
+*** IDEA Replace ex-info with custom cgi/assert Error (throwable)
+
+For now cgi/assert throws ex-info :type ::cgi/condition. Clojure only lets you throw
+something that's Throwable. Since we only throw for flow control we don't care about the
+stacktrace nor should be pay the price of collecting it on throw. It may be worth it to
+extend =java.lang.Exception= and override its =fillInStacktrace= to avoid expensive stack
+creation. Appears there's no easy way to do that in clojure code, except with AOT and
+gen-class. Several things we could do here.
+1. just copy paste [[https://www.infoworld.com/article/3269037/exceptions-in-java-part-2-advanced-features-and-types.html][listing 4 implementation in Java]] and compile it to class file in place,
+2. do the =gen-class= and pre-compile that single class .clj file (like 1 but in Clj),
+3. invoke Clojure compiler on a string (form) that generates such class and adds it to
+   RT - this one is fully dynamic and simply resides in our Clojure code.
+
+*NOTE* with =cgi/*assert-failed-default*= that throws and custom exception that doesn't
+collect the stacktrace we'll have to ensure we collect and report source location of
+"assertion" correctly. We could e.g. extract that info at expansion time from =&env= or
+something and ensure we attach it to our custom Exception or pre-generate the message that
+points at correct namespace, cgi handler and location.
+
+*** IDEA Side channel cgi/*condition* for communication?
+
+I'm not at all sure this is a good idea but it maybe useful.
+
+E.g. we could also adopt stack discipline, rather than =set!= the =cgi/*condition*=, then
+have some of those conditions reported to the client as flashes:
+#+begin_src clojure
+  (cgi/push-condition! :auth :failed)
+#+end_src
+
+Since we have to =(binding [cgi/*condition* nil] ...)= before we can =set!= it would that
+lead us to break "locality" of cgi handlers like with :around or :wrap context? Maybe not,
+since =assert-fail= handlers are invoked inside our =handle= protocol method. But I would
+not be able to see *condition* set! values at the top-level.
+
+*** DONE Allow multiple cgi roots (contexts)
+CLOSED: [2020-12-08 Tue 15:29] SCHEDULED: <2020-12-08 Tue>
+
+- State "DONE"       from "TODO"       [2020-12-08 Tue 15:29] \\
+  We simply piggieback on the "middleware" pattern:
+  #+begin_src clojure
+    (jetty/run-jetty
+     (-> defaul-handler
+         ;; will try request vs root1 then root2, note the inverse order
+         ((cgi/middleware {:root "www/root2" :fail root2-predicate}))
+         ((cgi/middleware {:root "www/root1" :fail root1-predicate}))))
+  #+end_src
+Example:
+#+begin_src clojure
+  (middleware {:root "pledge/www/new"
+               :fail (fn [request]
+                       (let [name (-> request :original :server name)]
+                         (or (empty? name)
+                             (= name "unknown")
+                             (= name "www")
+                             (= name "id")
+                             #_(-> request proto/pling)
+                             (-> request proto/store))))})
+  (middleware {:root "pledge/www/unknown"
+               :fail (fn [request]
+                       (-> request :original :server name (not= "unknown")))})
+  (middleware {:root "pledge/www/hq"
+               :fail (fn [request]
+                       (let [name (-> request :original :server name)]
+                         (not
+                          (or (empty? name)
+                              (= name "www")))))})
+#+end_src
+
+**** DONE Support :fail fast predicate
+CLOSED: [2020-12-08 Tue 15:11] SCHEDULED: <2020-12-08 Tue>
+- State "DONE"       from "STARTED"    [2020-12-08 Tue 15:11]
+:LOGBOOK:
+CLOCK: [2020-12-08 Tue 14:06]--[2020-12-08 Tue 15:11] =>  1:05
+:END:
+
+That would quickly delegate requests that :fail the predicate to subsequent cgi-contexts
+or handlers. E.g.:
+
+#+begin_src clojure
+  (middleware {:root "pledge/www/pling"
+               :fail (fn [request]
+                       (let [name (-> request :original :server name)]
+                         (or (empty? name)
+                             (= name "unknown")
+                             (= name "www")
+                             (= name "id")
+                             (-> request proto/store nil?))))})
+#+end_src
+
+**** DONE Support :domain fast check
+CLOSED: [2020-12-08 Tue 17:40] SCHEDULED: <2020-12-08 Tue>
+
+- State "DONE"       from "TODO"       [2020-12-08 Tue 17:40]
+simply convert into :fail fast fail context predicate
+
+*** DONE Carefully rething cgi-routes reloading
+CLOSED: [2020-12-10 Thu 11:07] SCHEDULED: <2020-12-10 Thu>
+- State "DONE"       from "STARTED"    [2020-12-10 Thu 11:07] \\
+  We now reload routes only to update middleware context and only
+  whenever =cgi/*reload-routes*= is true (default). Going theory is that
+  in production we'd set it to nil, whereas routing or handling requests
+  manually while developing we'd recompute context every time, that is I
+  expect to take care not to bind any request or context to a top level
+  var, but rather recompute every time I create a request.
+:LOGBOOK:
+CLOCK: [2020-12-10 Thu 08:54]--[2020-12-10 Thu 11:07] =>  2:13
+:END:
+
+I don't want to recompute cgi routes more than once "per request" but I also want to
+somehow guarantee that I don't find myself with stale routes in dev, which can happen if
+you e.g. store context or request in a var and then reuse it while routes changed.
+
+Probably most reliable thing is to timestamp (hash) cgi root subtree?
+
+*** TODO Implement reverse routing: handler => URL
+
+*** TODO Add INFO and DEBUG logging to CGI
+
+*** IDEA Reload routes when CGI filesystem changes
+
+TIL: java.nio.file [[https://docs.oracle.com/javase/7/docs/api/java/nio/file/Path.html][Path interface]] extends =watchable=, so:
+#+begin_quote
+This interface extends Watchable interface so that a directory located by a path can be
+registered with a WatchService and entries in the directory watched.
+#+end_quote
+see [[https://docs.oracle.com/javase/7/docs/api/java/nio/file/package-summary.html][java.nio.file package]] for more details
+
+Atm we rely on =cgi/*reload-routes*= setting to determine if we should recompute routes
+from the filesystem. When set to true it forces reload unconditionally, which is perfectly
+fine in dev. I'm not entirely sure if it is ever useful to reload in production. We could
+be clever about it and reload always e.g. on every request (or every so often) but only if
+the CGI filesystem tree actually changed since last reload. This is a valuable tool to
+have in other circumstances in our prelude.
+
+Note that =(.lastModified (io/as-file cgi-root))= timestamp on Unix only changes when
+cgi-root has file or dir added or removed but does not reflect recursive changes in its
+subdirs. We could walk subdirs and check .lastModified recursively or do smth more clever
+but only after we confirm that simply re-building routes (scripts) table on every request
+IS expensive.
+
+*** IDEA Auto discover CGI root namespaces
+CLOSED: [2020-12-07 Mon 18:49]
+
+another interesting approach we could take is have "default" middleware that discovers all
+cgi roots either on the classpath or in project. We are already marking our handlers with
+^:cgi meta. We could also mark cgi root namespace with ^:cgi meta. This is particularly
+nice if we are to provide our =cgi/start-server= (e.g. =run-jetty=) that automatically
+wraps handler in cgi/middleware that discovers all cgi roots. Since :cgi is a a key in
+meta map, we may also specify settings there e.g.:
+
+#+begin_src clojure
+  (ns ^{:cgi {:request 'wrap-request
+              :my {:request 'my-request
+                   :response 'wrap-response}
+              :their {:request 'their-request}
+              :fail 'fail-when
+              ;; domain check is essentially special-cased :fail that
+              ;; simply checks hostname against regexp
+              :domain #".*\.pledge\.link"}}
+      foo.www)
+
+  (defn wrap-request  [request] (return updated request))
+  (defn my-request    [request] (make my/request :from request))
+  (defn their-request [request] (make their/request :from request))
+  (defn fail-when     [request] conditions)
+#+end_src
+
+*** IDEA Route (chop) from the front of request path
+
+Atm we essentially have no more than two handlers given the longest path match:
+ns/path-method or ns/cgi e.g. given path "/pledge/create" the following two handlers will
+be tried: pledge.www.pledge/create and pledge.www.pledge/cgi. If we were to match path
+from the front though we'd also have "fallback" methods in pledge.www.
+
+Again, not clear if this is in fact useful or just clever. Parent routes (handlers) may
+not expect to be handed unmatched paths and might not even bother to check for unmatched
+path suffixes. Can we guarantee that such cases won't lead to terrible errors and security
+risks?
+
+**** IDEA Allow to delegate to next cgi handler via =(-> request next-method)=
+
+Not entirely clear if this is a useful, but should be easy enough to implement.
+
+*** IDEA Allow :around or :wrap HO function
+
+#+begin_quote
+NB in general I am against any such "context" because it breaks "locality" of CGI
+handlers: having CGI handler's namespace (file) open is no longer enough to understand and
+test the handlers - there's extra context introduced alsewhere that I need to both be
+aware of and know how to replicate it localy to invoke handlers manually as opposed to
+going through the middleware. This is most important when any such dynamic context (e.g.
+dynamic bindings) are part of the control flow. E.g. changing *assert-failed-default*
+behavior in the middleware may alter control flow significantly from throwing an error
+(the default) to delegating to the next handler. If my handlers (code) now rely on this
+latter behavior, I may end up puzzled if I forget to replicate it in the context of the
+handler's namespace.
+#+end_quote
+
+e.g. so we may establish dynamic bindings and such. Although this may signal our default
+*assert-failed* is the wrong default or a sign that our CGI impl is getting out of hand
+and becomes too compex approaching what everyone else is doing?
+#+begin_src clojure
+  (middleware
+   {:around (fn [cgi-handler]
+              (fn [request]
+                (binding [cgi/*assert-failed-default* (constantly nil)]
+                  (cgi-handler request))))})
+#+end_src
+
+** HTML and CSS
+
+*** TODO Install CSS via :css attribute
+
+#+begin_src clojure
+  [:html {:css (make css/css :from {})}
+   [:body {}
+    "body"]]
+#+end_src
+
+*** IDEA (html/include "some.org")
+CLOSED: [2021-08-06 Fri 15:51]
+
+I want to write static content (blogs, news, marketing) in Org. I also want semantic
+styles i.e. only add semantic classes and ids to Org blocks, then have those expand into
+potentially many Tailwind classes. Does this mean I want Org backend that produces my HTML
+hiccup-style tree that I may "include" from Clojure and have the client pull updated HTML.
+
+* Notes
+
+** CLJS compiler munges namespace names to generate =goog.provide= statements :TIL:
+
+Case number NNN of why you should know your compiler. So, get this. We have the following
+modules:
+
+clj/src/pledge/www/new.cljs => (ns pledge.www.new)
+
+Guess what CLJS compiler does, when it generates js/pledge/www/new.js?
+It emits this at the top:
+#+begin_src js
+  goog.provide('pledge.www.new$');
+#+end_src
+
+Notice that the module name has been munged ... because =new= is fucking reserved in JS
+even though we are inside a string and this is valid file name. Exact source lines in the
+CLJS compiler are [[https://github.com/clojure/clojurescript/blob/a4673b880756531ac5690f7b4721ad76c0810327/src/main/clojure/cljs/compiler.cljc#L1359][this code emit]] and this [[https://github.com/clojure/clojurescript/blob/a4673b880756531ac5690f7b4721ad76c0810327/src/main/clojure/cljs/compiler.cljc#L107-L111][munge-reserved]] and [[https://github.com/clojure/clojurescript/blob/a4673b880756531ac5690f7b4721ad76c0810327/src/main/clojure/cljs/compiler.cljc#L132][its use]] which together
+conspire to fuck you up if you just happen to use filename (and therefore module name)
+that's also a reserved word in Javascript.
+
+Why is this a problem? Because if you decide to explicitly require said module from
+javascript on your webpage you'll probably write =goog.require("pledge.www.new")= instead
+of =goog.require("pledge.www.new$")= and will stare helplessly at console reporting that
+it can't find the fucking module that's right fucking there.
+
+Two ways one can figure something crazy like this out:
+
+1. Look and compare at generated js files e.g.
+
+clj/src/pledge/www/new.cljs
+=> (ns pledge.www.new)
+=> goog.provide('pledge.www.new$')
+
+vs
+
+clj/src/pledge/www/known.cljs
+=> (ns pledge.www.known)
+=> goog.provide('pledge.www.known')
+
+
+2. If compiling without :main in your CLJS options then check =goog.addDependency=
+   statements in js/main.js (with :main look in =cljs_deps.js=) and you'll notice the
+   difference:
+#+begin_src js
+  // see the names of the modules provided (2nd argument)
+
+  // this one has extra $ due to munging
+  goog.addDependency("../pledge/www/new.js", ['pledge.www.new$'], ['cljs.core']);
+  // this one does not
+  goog.addDependency("../pledge/www/known/pledge.js", ['pledge.www.known.pledge'], ['cljs.core']);
+#+end_src
+
+** =cljs_deps.js= and what's available for goog.require and :preloads  :TIL:
+
+Basically, only what ends up in =cljs_deps.js= in your =:output-dir=. Corollary of this is
+that if your =user.cljs= is not in the source path that cljs compiler used but e.g. in an
+:extra-path say under dev, it won't be compiled and therefore won't end up in either
+:output-dir, nor in =cljs_deps.js=. I found out this the hard way by adding my 'cljs.user
+namespace to :preloads compiler option: goog.require is indeed injected but no code runs
+exactly because my user.cljs was outside the source path of the compiler.
+
+Because the compiler generates both main.js and =cljs_deps.js= this effectively means
+you're limited to only one source path for cljs. Try compiling another by explicitly
+passing it to the compiler and it'll overwrite both main.js and =cljs_deps.js=. This
+behavior is [[https://clojurescript.org/reference/repl#code-loading-in-the-browser][mentioned in docs]] (beware at least some parts of this link appear outdated).
+
+Now, instead of e.g. in dev/ place user.cljs in the root of your source path e.g. if your
+:paths in deps.edn is src/, then put it right there:
+#+begin_src clojure
+  (ns cljs.user)
+  (println "hi there")
+#+end_src
+
+Then add 'cljs.user to :preloads. And now it'll be loaded (or re-loaded) every time you
+reload the browser before your :main ns is loaded. Because REPL loads user.cljs when it
+starts, only on REPL launch user will execute twice: first time due to initial user.cljs
+load and second time due to :preloads being loaded.
+
+Possible improvement to cljs.repl code: instead of performing (load-file "user.cljs") as
+it does atm, simply check if "user.cljs" is available on the classpath, compile it like
+any other code and inject its namespace into :preloads as the default.
+
+** Oddity with user.cljs and load-file
+
+Turns out a long standing issue that is known. When cljs repl starts it tries to load user
+file. First oddity is that it doesn't follow Java's classpath convention and simply looks
+for whatever (io/resource "user.cljs") or (io/resource "user.cljc") it can find. Then
+extracts its namespace (so you can have any at all), then compiles and loads it (injects
+into your browser session) with =load-file=. Load-file however has a bug in that it
+duplicates whatever =:output-dir= you had in option, so the compiled output ends up being
+e.g. =resources/public/js/resources/public/js/ns.path/user.js=. Everything still works out
+because =load-file= injects correct path, but still baffling:
+- bug [[https://clojure.atlassian.net/browse/CLJS-2918][ticket]] CLJS-2918
+- bug [[https://clojure.atlassian.net/browse/CLJS-2753][source explained ticket]] CLJS-2753.
+
+Another problem is with reloads. When repl starts user.cljs is found and loaded with
+=load-file=. What happens if you reload the browser? Obviously it is no longer there cause
+it was injected and isn'n in =:main= namespace. You can confirm in the connected repl that
+nothing from 'user is available. The only way to get it back is with (load-file
+"user.cljs") which appears to load it and do the equivalent of (use 'cljs.user). However, e.g.
+higher level (load-namespace 'cljs.user) will complain about circular dependency and fail.
+
+** about time
+
+I could make full use of Racket's Gregor library with its moments and datetime arithmetic
+and then convert to SQLite. However, timezone and therefore localtime on the user's
+pledgeling (instance) isn't the same as in e.g. user browser (machine) which would need to
+be computed on the client i.e. Javascript.
+
+SQLite computes its time in UTC by default and is in ISO8601 for my purposes. See [[https://www.sqlite.org/lang_datefunc.html][SQLite
+docs]].
+
+Racket Gregor library lets you convert to SQLite format (ISO8601) quite easily with
+[[https://docs.racket-lang.org/gregor/moment.html?doc=gregor&rel=moment-provider.html%2523%252528def._%252528%252528lib._gregor%25252Fmain..rkt%252529._moment-provider%257E3f%252529%252529#%2528def._%2528%2528lib._gregor%252Fmain..rkt%2529._moment-~3eiso8601%2529%2529][moment->iso8601]]:
+#+begin_src racket
+  > (moment->iso8601 (moment 1970 #:tz "Etc/UTC"))
+  "1970-01-01T00:00:00Z"
+
+  > (moment->iso8601 (moment 1969 7 21 2 56 #:tz 0))
+  "1969-07-21T02:56:00Z"
+
+  > (moment->iso8601 (moment 1 2 3 4 5 6 7 #:tz "America/Los_Angeles"))
+  "0001-02-03T04:05:06.000000007-07:52"
+
+  ;; also here is my tz
+  > (current-timezone)
+  "Europe/London"
+#+end_src
+
+
+[[https://www.sqlite.org/lang_datefunc.html#modifiers][SQLite datetime modifiers]] are pretty awesome. Maybe I should simply allow them on the
+client e.g. user could type somthing like:
+#+begin_example
+good for: 7 days and 5 hours
+=> SQLite modifiers
+datetime('now','+7 days', '+5 hours')
+#+end_example
